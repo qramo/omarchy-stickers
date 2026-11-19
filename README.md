@@ -52,6 +52,7 @@ bash scripts/build-gacha.sh     # index.html を再生成
 ## クレジット
 
 - 迷路アイコンと OMARCHY ワードマークは [Omarchy](https://github.com/basecamp/omarchy) の公式素材です。
-- カタカナ「オマーチー」ロゴ: 作者 (確認中)
+- カタカナ「オマーチー」ロゴ: [Komagata さん (@komagata)](https://x.com/komagata) の作品です。
+  [ステッカーの投稿 (X)](https://x.com/komagata/status/2098961422290125142) / [配布元 (Omarchy Discord)](https://discord.com/channels/1390012484194275541/1548046499160793329/1568133428988215346)
 - OMARCHY TOKYO / TOKYO NIGHT の壁紙: 作者 (確認中)
 - 非公式のファン制作物です。

@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Omarchy Sticker Gacha</title>
+<style>
+  :root { --bg:#0b0c14; --panel:#16182a; --fg:#c0caf5; --muted:#565f89; --accent:#b4fc7a; --line:#2a2e45; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui, "Noto Sans JP", sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:2; }
+  header h1 { font-size:15px; margin:0 8px 0 0; color:var(--accent); letter-spacing:.04em; }
+  button { background:var(--accent); color:#0b0c14; border:0; border-radius:8px; padding:8px 14px; font-weight:700; font-size:14px; cursor:pointer; }
+  button.secondary { background:transparent; color:var(--fg); border:1px solid var(--line); }
+  button:active { transform:translateY(1px); }
+  input[type=text] { width:9em; background:#0b0c14; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:inherit; }
+  label { color:var(--muted); font-size:12px; }
+  main { display:flex; justify-content:center; padding:16px; }
+  .stage { position:relative; width:min(100%, calc((100vh - 120px) * 1500 / 2102)); }
+  canvas { display:block; width:100%; height:auto; border-radius:4px; }
+  #overlay { position:absolute; inset:0; cursor:pointer; }
+  footer { padding:0 16px 24px; color:var(--muted); font-size:12px; max-width:900px; margin:0 auto; }
+  footer code { color:var(--fg); }
+  .pill { font-size:12px; color:var(--muted); }
+  .pill b { color:var(--fg); }
+</style>
+</head>
+<body>
+<header>
+  <h1>OMARCHY STICKER GACHA</h1>
+  <button id="roll">ガチャ</button>
+  <button id="save">JPEGを保存</button>
+  <button id="unlock" class="secondary">ロック解除</button>
+  <span class="pill">seed: <b id="seedView">-</b></span>
+  <label>seed指定 <input id="seedIn" type="text" placeholder="数字を入れてEnter"></label>
+</header>
+<main>
+  <div class="stage">
+    <canvas id="sheet" width="1500" height="2102"></canvas>
+    <canvas id="overlay" width="1500" height="2102"></canvas>
+  </div>
+</main>
+<footer>
+  シールをクリックするとロック(🔒)され、次のガチャで配色が変わらなくなります。
+  2L判(127×178mm)300dpi、1500×2102px。保存したJPEGをネットワークプリントにアップロードし、「シール紙」「2L」で印刷してください。
+  カタカナのうち1枚は必ず元の緑(単色)になります。迷路ロゴ4枚は4配色を1枚ずつ、位置だけ入れ替わります。
+</footer>
+<script>
+// ---------- assets (white alpha masks) ----------
+const ASSETS = { kana: "__KANA__", word: "__WORD__", icon: "__ICON__" };
+
+// ---------- palette ----------
+const GREEN = "#b4fc7a", BLACK = "#000000", WHITE = "#ffffff";
+const CUT = "#9a9a9a", SHEET_BG = "#0b0c14";
+// fills: solid or coarse gradient (dir: v = vertical bands, h = horizontal bands)
+const FILLS = {
+  green:  { kind:"solid", color:GREEN, bgs:[BLACK, WHITE] },
+  black:  { kind:"solid", color:BLACK, bgs:[GREEN, WHITE] },
+  white:  { kind:"solid", color:WHITE, bgs:[BLACK] },
+  tte:    { kind:"grad", dir:"v", stops:["#8A008A","#00D1FF","#FFFFFF"], bgs:[BLACK] },
+  sunset: { kind:"grad", dir:"v", stops:["#ffd166","#ff9e64","#ff5c8a","#bb9af7"], bgs:[BLACK, WHITE] },
+  tokyo:  { kind:"grad", dir:"h", stops:["#7aa2f7","#bb9af7","#ff79c6"], bgs:[BLACK, WHITE] },
+  steps:  { kind:"grad", dir:"v", stops:["#2f6b2a","#9ece6a","#b4fc7a","#ffffff"], bgs:[BLACK] },
+  cyber:  { kind:"grad", dir:"h", stops:["#0db9d7","#ad8ee6","#ff7a93","#ffd166"], bgs:[BLACK, WHITE] },
+  dither: { kind:"dither", stops:["#b4fc7a","#0db9d7"], bgs:[BLACK, WHITE] },
+};
+const KANA_FILLS = ["green","tte","sunset","tokyo","steps","cyber","dither"];
+const WORD_FILLS = ["green","black","white","tte","sunset","tokyo","steps","cyber","dither"];
+const ICON_WAYS  = [[BLACK,GREEN],[GREEN,BLACK],[BLACK,WHITE],[WHITE,GREEN]]; // [bg, icon]
+
+// ---------- layout (px on 1500x2102; from make_layout.sh) ----------
+const B = 14;              // white border
+const M = 50, LR = 600, SR = 420, SQ = 201, GAP = 24, BH = 330;
+const FW = 1400 - 2*B, HW = Math.floor((1400 - GAP)/2) - 2*B, QH = Math.floor((BH - GAP)/2) - 2*B;
+const g1 = Math.floor((1400 - 2*LR)/3);
+const sqOuter = SQ + 2*B, grid = 2*sqOuter + 16;
+const g2 = Math.floor((1400 - 2*SR - grid)/4);
+const y2 = M + LR + 50, y3 = y2 + grid + 50, y4 = y3 + BH + GAP;
+const xsq = M + g2 + SR + g2 + SR + g2, xr = M + HW + 2*B + GAP;
+// each sticker: shape (disc|box), outer rect, content kind, content ratio/pad
+const STICKERS = [
+  { id:"kana_big",  shape:"disc", x:M+g1,            y:M,  d:LR, content:"kana", ratio:0.84 },
+  { id:"word_big",  shape:"disc", x:M+g1+LR+g1,      y:M,  d:LR, content:"word", ratio:0.80 },
+  { id:"kana_small",shape:"disc", x:M+g2,            y:y2, d:SR, content:"kana", ratio:0.84 },
+  { id:"word_small",shape:"disc", x:M+g2+SR+g2,      y:y2, d:SR, content:"word", ratio:0.80 },
+  { id:"sq0", shape:"box", x:xsq,            y:y2,            w:SQ, h:SQ, content:"icon" },
+  { id:"sq1", shape:"box", x:xsq+sqOuter+16, y:y2,            w:SQ, h:SQ, content:"icon" },
+  { id:"sq2", shape:"box", x:xsq,            y:y2+sqOuter+16, w:SQ, h:SQ, content:"icon" },
+  { id:"sq3", shape:"box", x:xsq+sqOuter+16, y:y2+sqOuter+16, w:SQ, h:SQ, content:"icon" },
+  { id:"ban_full", shape:"box", x:M,  y:y3, w:FW, h:BH-2*B, content:"kana" },
+  { id:"ban_half", shape:"box", x:M,  y:y4, w:HW, h:BH-2*B, content:"word" },
+  { id:"ban_q1",   shape:"box", x:xr, y:y4, w:HW, h:QH, content:"kana" },
+  { id:"ban_q2",   shape:"box", x:xr, y:y4+QH+2*B+GAP, w:HW, h:QH, content:"word" },
+];
+for (const s of STICKERS) { // outer rect for hit-testing
+  s.ow = s.shape === "disc" ? s.d : s.w + 2*B;
+  s.oh = s.shape === "disc" ? s.d : s.h + 2*B;
+}
+
+// ---------- RNG ----------
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+let seed = 0, rand = Math.random;
+const pick = arr => arr[Math.floor(rand()*arr.length)];
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(rand()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+// ---------- state ----------
+const state = {};   // id -> { fill, bg } or { bg, icon }
+const locked = new Set();
+
+function rollScheme(s){
+  if (s.content === "icon") return null; // handled as a group
+  const fills = s.content === "kana" ? KANA_FILLS : WORD_FILLS;
+  const f = pick(fills);
+  return { fill:f, bg: pick(FILLS[f].bgs) };
+}
+function roll(newSeed){
+  seed = newSeed ?? Math.floor(Math.random()*1e9);
+  rand = mulberry32(seed);
+  for (const s of STICKERS) if (!locked.has(s.id) && s.content !== "icon") state[s.id] = rollScheme(s);
+  // maze squares: four colourways, one each, shuffled among unlocked slots
+  const sq = STICKERS.filter(s => s.content === "icon");
+  const used = sq.filter(s => locked.has(s.id)).map(s => state[s.id].way);
+  const free = shuffle(ICON_WAYS.map((_,i)=>i).filter(i => !used.includes(i)));
+  for (const s of sq) if (!locked.has(s.id)) state[s.id] = { way: free.pop() };
+  // guarantee: at least one katakana sticker in original solid green
+  const kana = STICKERS.filter(s => s.content === "kana");
+  if (!kana.some(s => state[s.id].fill === "green")) {
+    const cand = kana.filter(s => !locked.has(s.id));
+    if (cand.length) state[pick(cand).id] = { fill:"green", bg:BLACK };
+  }
+  document.getElementById("seedView").textContent = seed;
+  draw();
+}
+
+// ---------- drawing ----------
+const sheet = document.getElementById("sheet"), ctx = sheet.getContext("2d");
+const ov = document.getElementById("overlay"), octx = ov.getContext("2d");
+const IMG = {};
+function loadAll(){ return Promise.all(Object.entries(ASSETS).map(([k,src]) => new Promise(res => { const im = new Image(); im.onload = () => { IMG[k]=im; res(); }; im.src = src; }))); }
+
+function hexToRgb(h){ return [1,3,5].map(i => parseInt(h.slice(i,i+2),16)); }
+function lerpStops(stops, t){
+  const n = stops.length-1, p = Math.min(Math.max(t,0),0.99999)*n, i = Math.floor(p), f = p-i;
+  const a = hexToRgb(stops[i]), b = hexToRgb(stops[i+1]);
+  return a.map((v,k) => Math.round(v + (b[k]-v)*f));
+}
+const BAYER = [[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]];
+// coarse fill painted into a w x h canvas; cell size scaled with the content height
+function paintFill(fill, w, h){
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const x = c.getContext("2d");
+  if (fill.kind === "solid") { x.fillStyle = fill.color; x.fillRect(0,0,w,h); return c; }
+  let cols, rows;
+  if (fill.kind === "dither") { cols = 128; rows = Math.max(8, Math.round(128*h/w)); }
+  else if (fill.dir === "v") { rows = 9; cols = Math.max(1, Math.round(9*w/h)); }
+  else { cols = 48; rows = Math.max(1, Math.round(48*h/w)); }
+  const t = document.createElement("canvas"); t.width = cols; t.height = rows; const tx = t.getContext("2d");
+  const img = tx.createImageData(cols, rows);
+  for (let r=0; r<rows; r++) for (let q=0; q<cols; q++) {
+    let rgb;
+    if (fill.kind === "dither") {
+      const base = q/(cols-1), th = (BAYER[r%4][q%4]+0.5)/16 - 0.5;
+      const lv = Math.round(Math.min(Math.max(base + th/4, 0), 1) * 3) / 3;   // 4 levels
+      rgb = lerpStops(fill.stops, lv);
+    } else {
+      const tpos = fill.dir === "v" ? (r+0.5)/rows : (q+0.5)/cols;
+      rgb = lerpStops(fill.stops, tpos);
+    }
+    const o = (r*cols+q)*4; img.data[o]=rgb[0]; img.data[o+1]=rgb[1]; img.data[o+2]=rgb[2]; img.data[o+3]=255;
+  }
+  tx.putImageData(img,0,0);
+  x.imageSmoothingEnabled = false; x.drawImage(t, 0,0,cols,rows, 0,0,w,h);
+  return c;
+}
+// content image masked with a fill, sized w x h
+function maskedContent(imgKey, fill, w, h){
+  const c = paintFill(fill, w, h), x = c.getContext("2d");
+  x.globalCompositeOperation = "destination-in";
+  x.imageSmoothingEnabled = true; x.imageSmoothingQuality = "high";
+  x.drawImage(IMG[imgKey], 0, 0, w, h);
+  return c;
+}
+function fitSize(img, maxW, maxH){
+  const r = Math.min(maxW/img.width, maxH/img.height);
+  return [Math.round(img.width*r), Math.round(img.height*r)];
+}
+function roundRect(x, y, w, h, r){ ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+
+function drawSticker(s){
+  const st = state[s.id];
+  let bg, fillSpec, imgKey = s.content;
+  if (s.content === "icon") { bg = ICON_WAYS[st.way][0]; fillSpec = { kind:"solid", color: ICON_WAYS[st.way][1] }; }
+  else { bg = st.bg; fillSpec = FILLS[st.fill]; }
+  ctx.save();
+  if (s.shape === "disc") {
+    const cx = s.x + s.d/2, cy = s.y + s.d/2, Di = s.d - 2*B;
+    ctx.fillStyle = WHITE; ctx.beginPath(); ctx.arc(cx, cy, s.d/2, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = CUT; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, s.d/2 - 1, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(cx, cy, Di/2, 0, Math.PI*2); ctx.fill();
+    const cw = Math.floor(Di * s.ratio), [w, h] = fitSize(IMG[imgKey], cw, cw);
+    ctx.drawImage(maskedContent(imgKey, fillSpec, w, h), Math.round(cx - w/2), Math.round(cy - h/2));
+  } else {
+    const R = 36, W = s.w, H = s.h, pad = Math.min(40, Math.floor(H/8));
+    const ox = s.x, oy = s.y, OW = W + 2*B, OH = H + 2*B;
+    ctx.fillStyle = WHITE; roundRect(ox, oy, OW, OH, R + B); ctx.fill();
+    ctx.strokeStyle = CUT; ctx.lineWidth = 2; roundRect(ox + 1, oy + 1, OW - 2, OH - 2, R + B); ctx.stroke();
+    ctx.fillStyle = bg; roundRect(ox + B, oy + B, W, H, R); ctx.fill();
+    const [w, h] = fitSize(IMG[imgKey], W - 2*pad, H - 2*pad);
+    ctx.drawImage(maskedContent(imgKey, fillSpec, w, h), Math.round(ox + B + W/2 - w/2), Math.round(oy + B + H/2 - h/2));
+  }
+  ctx.restore();
+}
+function draw(){
+  ctx.fillStyle = SHEET_BG; ctx.fillRect(0, 0, sheet.width, sheet.height);
+  for (const s of STICKERS) drawSticker(s);
+  drawOverlay();
+}
+function drawOverlay(){
+  octx.clearRect(0, 0, ov.width, ov.height);
+  for (const s of STICKERS) if (locked.has(s.id)) {
+    octx.font = "bold 44px system-ui, sans-serif"; octx.textAlign = "center"; octx.textBaseline = "middle";
+    octx.fillStyle = "rgba(0,0,0,.55)"; octx.beginPath(); octx.arc(s.x + s.ow - 36, s.y + 36, 32, 0, Math.PI*2); octx.fill();
+    octx.fillText("🔒", s.x + s.ow - 36, s.y + 38);
+  }
+}
+
+// ---------- interaction ----------
+ov.addEventListener("click", e => {
+  const r = ov.getBoundingClientRect();
+  const px = (e.clientX - r.left) * ov.width / r.width, py = (e.clientY - r.top) * ov.height / r.height;
+  const hit = STICKERS.find(s => px >= s.x && px <= s.x + s.ow && py >= s.y && py <= s.y + s.oh);
+  if (!hit) return;
+  locked.has(hit.id) ? locked.delete(hit.id) : locked.add(hit.id);
+  drawOverlay();
+});
+document.getElementById("roll").onclick = () => roll();
+document.getElementById("unlock").onclick = () => { locked.clear(); drawOverlay(); };
+document.getElementById("seedIn").addEventListener("keydown", e => { if (e.key === "Enter") { const v = parseInt(e.target.value, 10); if (!isNaN(v)) roll(v); } });
+
+// JPEG export with 300 dpi written into the JFIF header
+function withDpi(buf, dpi){
+  const b = new Uint8Array(buf);
+  if (b[2] === 0xFF && b[3] === 0xE0 && b[6] === 0x4A && b[7] === 0x46) { // JFIF APP0 exists
+    b[13] = 1; b[14] = dpi >> 8; b[15] = dpi & 255; b[16] = dpi >> 8; b[17] = dpi & 255; return b;
+  }
+  const app0 = [0xFF,0xE0,0,16, 0x4A,0x46,0x49,0x46,0, 1,1, 1, dpi>>8,dpi&255, dpi>>8,dpi&255, 0,0];
+  const out = new Uint8Array(b.length + app0.length);
+  out.set(b.subarray(0,2), 0); out.set(app0, 2); out.set(b.subarray(2), 2 + app0.length); return out;
+}
+document.getElementById("save").onclick = () => {
+  sheet.toBlob(async blob => {
+    const bytes = withDpi(await blob.arrayBuffer(), 300);
+    const url = URL.createObjectURL(new Blob([bytes], { type:"image/jpeg" }));
+    const a = document.createElement("a"); a.href = url; a.download = `omarchy-stickers-2L-${seed}.jpg`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }, "image/jpeg", 0.95);
+};
+
+loadAll().then(() => roll());
+</script>
+</body>
+</html>

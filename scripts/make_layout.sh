@@ -66,5 +66,9 @@ xr=$((M + HW + 2*B + GAP))
 args+=( $TMP/ban_q1.png -geometry +$xr+$y -composite  $TMP/ban_q2.png -geometry +$xr+$((y + QH + 2*B + GAP)) -composite )
 y=$((y+BH))
 echo "bottom y=$y (limit 2052)"
-magick -size 1500x2102 xc:"$BG" "${args[@]}" -units PixelsPerInch -density 300 -quality 95 $OUT/omarchy-layout-sample-2L.jpg
+CREDIT="Katakana logo: Komagata (@komagata)  -  Omarchy logo: basecamp/omarchy  -  qramo.github.io/omarchy-stickers"
+magick -size 1500x2102 xc:"$BG" "${args[@]}" \
+  -gravity North -fill '#8a90b8' -font "$(fc-match -f %{file} sans-serif)" -pointsize 26 -annotate +0+1978 "$CREDIT" \
+  -pointsize 22 -annotate +0+2016 "Unofficial fan-made sticker sheet" \
+  -units PixelsPerInch -density 300 -quality 95 $OUT/omarchy-layout-sample-2L.jpg
 rm -rf $TMP

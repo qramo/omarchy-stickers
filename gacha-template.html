@@ -209,9 +209,20 @@ function drawSticker(s){
   }
   ctx.restore();
 }
+const CREDIT = "Katakana logo: Komagata (@komagata)  \u00b7  Omarchy logo: basecamp/omarchy  \u00b7  qramo.github.io/omarchy-stickers";
+function drawCredit(){
+  ctx.save();
+  ctx.fillStyle = "#8a90b8"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+  ctx.font = "26px system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif";
+  ctx.fillText(CREDIT, sheet.width/2, 2000);
+  ctx.font = "22px system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif";
+  ctx.fillText(`Unofficial fan-made sticker sheet  \u00b7  seed ${seed}`, sheet.width/2, 2036);
+  ctx.restore();
+}
 function draw(){
   ctx.fillStyle = SHEET_BG; ctx.fillRect(0, 0, sheet.width, sheet.height);
   for (const s of STICKERS) drawSticker(s);
+  drawCredit();
   drawOverlay();
 }
 function drawOverlay(){
